@@ -11,6 +11,7 @@ namespace VexPay.Config
         {
             services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
             services.Configure<SepaySettings>(configuration.GetSection("SePay"));
+            services.Configure<GlobalSettings>(configuration.GetSection("Global"));
 
             services.AddHttpClient();
             services.AddScoped<IJwtTokenService, JwtTokenService>();
