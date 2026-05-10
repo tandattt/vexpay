@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   BadgePercent,
   Banknote,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleDollarSign,
   Headphones,
@@ -17,7 +18,7 @@ import {
   Wallet,
   XCircle,
 } from "lucide-react";
-import { createDepositQr, getDepositHistory, getDepositStatus } from "../api/deposit";
+import { cancelDeposit, createDepositQr, getDepositHistory, getDepositHistoryQr, getDepositStatus } from "../api/deposit";
 import { HttpError } from "../api/client";
 import { getMyBalance } from "../api/wallet";
 import type { DepositHistoryResponse, UserInfo } from "../types";
@@ -29,19 +30,25 @@ interface Props {
 }
 
 const QUICK_AMOUNTS = [10_000, 20_000, 500_000, 1_000_000, 10_000_000];
+const HISTORY_PAGE_SIZE = 5;
+const ACTIVE_DEPOSIT_CODE_KEY = "vexpay.active_deposit_code";
 
 type DepositMethod = "qr" | "bank";
 
 interface HistoryRow {
+  id: string;
   date: string;
   amount: string;
-  status: "Completed" | "Pending" | "Failed";
+  status: "Completed" | "Pending" | "Failed" | "Cancelled";
   method: string;
+  code: string;
+  remainingSeconds: number | null;
 }
 
 function mapDepositStatus(value: DepositHistoryResponse["status"]): HistoryRow["status"] {
   if (value === 1 || value === "Completed") return "Completed";
   if (value === 2 || value === "Failed") return "Failed";
+  if (value === 3 || value === "Cancelled") return "Cancelled";
   return "Pending";
 }
 
@@ -52,11 +59,22 @@ function mapDepositMethod(value: DepositHistoryResponse["method"]): string {
 
 function toHistoryRow(item: DepositHistoryResponse): HistoryRow {
   return {
+    id: item.id,
+    code: item.code,
     date: new Date(item.createdAt).toLocaleString("vi-VN"),
     amount: `${new Intl.NumberFormat("vi-VN").format(item.amount)}đ`,
     status: mapDepositStatus(item.status),
     method: mapDepositMethod(item.method),
+    remainingSeconds: item.remainingSeconds ?? null,
   };
+}
+
+function formatCountdown(seconds: number | null) {
+  if (seconds === null) return null;
+  const safeSeconds = Math.max(seconds, 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 export default function DashboardPage({ user, token, onSignOut }: Props) {
@@ -65,15 +83,24 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalPages, setHistoryTotalPages] = useState(0);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [expandedQrImageUrl, setExpandedQrImageUrl] = useState<string | null>(null);
   const [activeMenu, setActiveMenu] = useState<"deposit">("deposit");
   const [selectedMethod, setSelectedMethod] = useState<DepositMethod>("qr");
   const [amount, setAmount] = useState<number>(1_000_000);
   const [customAmount, setCustomAmount] = useState<string>("");
-  const [depositCode, setDepositCode] = useState<string | null>(null);
+  const [depositCode, setDepositCode] = useState<string | null>(() => sessionStorage.getItem(ACTIVE_DEPOSIT_CODE_KEY));
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
-  const [depositStatus, setDepositStatus] = useState<"Pending" | "Completed" | "Failed" | null>(null);
+  const [depositStatus, setDepositStatus] = useState<"Pending" | "Completed" | "Failed" | "Cancelled" | null>(null);
+  const [depositRemainingSeconds, setDepositRemainingSeconds] = useState<number | null>(null);
   const [depositError, setDepositError] = useState<string | null>(null);
   const [isCreatingDeposit, setIsCreatingDeposit] = useState(false);
+  const [isCancellingDeposit, setIsCancellingDeposit] = useState(false);
+  const [historyTick, setHistoryTick] = useState(0);
+  const expiredHandledRef = useRef(new Set<string>());
+  const activeQrExpiredHandledRef = useRef<string | null>(null);
 
   const initials =
     user.fullName
@@ -88,36 +115,99 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
     return `${new Intl.NumberFormat("vi-VN").format(balance)}đ`;
   }, [balance]);
 
-  const loadHistory = async () => {
+  const loadBalance = async (ignore?: () => boolean) => {
+    try {
+      setBalanceError(null);
+      const response = await getMyBalance(token);
+      if (!ignore?.()) setBalance(response.balance);
+    } catch (error) {
+      if (ignore?.()) return;
+      const message = error instanceof HttpError ? error.message : "Không tải được số dư ví.";
+      setBalanceError(message);
+    }
+  };
+
+  const loadHistory = async (page = historyPage, showLoading = true, excludeCode?: string | null) => {
     try {
       setHistoryError(null);
-      setIsHistoryLoading(true);
-      const data = await getDepositHistory(token);
-      setHistory(data.map(toHistoryRow));
+      if (showLoading) setIsHistoryLoading(true);
+      const data = await getDepositHistory(token, page, HISTORY_PAGE_SIZE);
+      const rows = data.items.map(toHistoryRow);
+      const existingCodes = new Set(rows.map((row) => row.code));
+      expiredHandledRef.current.forEach((code) => {
+        if (!existingCodes.has(code)) {
+          expiredHandledRef.current.delete(code);
+        }
+      });
+      const activeCode = excludeCode ?? depositCode;
+      const filteredRows = activeCode ? rows.filter((x) => x.code !== activeCode) : rows;
+      setHistory(filteredRows);
+      if (activeCode) {
+        const active = rows.find((x) => x.code === activeCode && x.status === "Pending");
+        setDepositRemainingSeconds(active?.remainingSeconds ?? null);
+      }
+      setHistoryPage(data.page);
+      setHistoryTotalPages(data.totalPages);
+      if (expandedHistoryId && !filteredRows.some((x) => x.id === expandedHistoryId && x.status === "Pending")) {
+        setExpandedHistoryId(null);
+        if (expandedQrImageUrl) URL.revokeObjectURL(expandedQrImageUrl);
+        setExpandedQrImageUrl(null);
+      }
     } catch (error) {
       const message = error instanceof HttpError ? error.message : "Không tải được lịch sử nạp.";
       setHistoryError(message);
     } finally {
-      setIsHistoryLoading(false);
+      if (showLoading) setIsHistoryLoading(false);
     }
   };
 
   useEffect(() => {
-    let ignore = false;
+    if (depositCode) {
+      sessionStorage.setItem(ACTIVE_DEPOSIT_CODE_KEY, depositCode);
+    } else {
+      sessionStorage.removeItem(ACTIVE_DEPOSIT_CODE_KEY);
+    }
+  }, [depositCode]);
+
+  useEffect(() => {
+    if (!depositCode || qrImageUrl) return;
+
+    let cancelled = false;
     (async () => {
       try {
-        setBalanceError(null);
-        const response = await getMyBalance(token);
-        if (!ignore) setBalance(response.balance);
-      } catch (error) {
-        if (ignore) return;
-        const message =
-          error instanceof HttpError ? error.message : "Không tải được số dư ví.";
-        setBalanceError(message);
+        const response = await getDepositStatus(depositCode, token);
+        const status = mapDepositStatus(response.status);
+        if (cancelled) return;
+        if (status !== "Pending") {
+          setDepositCode(null);
+          setDepositStatus(null);
+          setDepositRemainingSeconds(null);
+          return;
+        }
+        const image = await getDepositHistoryQr(depositCode, token);
+        if (cancelled) {
+          URL.revokeObjectURL(image);
+          return;
+        }
+        setQrImageUrl(image);
+        setDepositStatus("Pending");
+      } catch {
+        if (cancelled) return;
+        setDepositCode(null);
+        setDepositStatus(null);
+        setDepositRemainingSeconds(null);
       }
     })();
 
-    void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [depositCode, qrImageUrl, token]);
+
+  useEffect(() => {
+    let ignore = false;
+    void loadBalance(() => ignore);
+    void loadHistory(1);
 
     return () => {
       ignore = true;
@@ -125,7 +215,55 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
   }, [token]);
 
   useEffect(() => {
-    if (!depositCode || depositStatus === "Completed" || depositStatus === "Failed") return;
+    const countdown = setInterval(() => {
+      setHistory((current) => current.map((row) => (
+        row.status === "Pending" && row.remainingSeconds !== null
+          ? { ...row, remainingSeconds: Math.max(row.remainingSeconds - 1, 0) }
+          : row
+      )));
+      setDepositRemainingSeconds((current) => (current === null ? null : Math.max(current - 1, 0)));
+      setHistoryTick((value) => value + 1);
+    }, 1000);
+
+    return () => clearInterval(countdown);
+  }, []);
+
+  useEffect(() => {
+    const newlyExpiredHistory = history.filter(
+      (row) => row.status === "Pending" && row.remainingSeconds === 0 && !expiredHandledRef.current.has(row.code),
+    );
+    const activeQrExpired =
+      depositStatus === "Pending" &&
+      depositRemainingSeconds === 0 &&
+      depositCode !== null &&
+      activeQrExpiredHandledRef.current !== depositCode;
+
+    if (newlyExpiredHistory.length === 0 && !activeQrExpired) return;
+
+    newlyExpiredHistory.forEach((row) => expiredHandledRef.current.add(row.code));
+    if (activeQrExpired && depositCode) {
+      activeQrExpiredHandledRef.current = depositCode;
+    }
+
+    void loadHistory(historyPage, false);
+    if (activeQrExpired && depositCode) {
+      void getDepositStatus(depositCode, token)
+        .then((response) => setDepositStatus(mapDepositStatus(response.status)))
+        .catch(() => undefined);
+    }
+  }, [historyTick]);
+
+  useEffect(() => {
+    const refresh = setInterval(() => {
+      void loadHistory(historyPage, false);
+      void loadBalance();
+    }, 10000);
+
+    return () => clearInterval(refresh);
+  }, [historyPage, token, depositCode]);
+
+  useEffect(() => {
+    if (!depositCode || depositStatus === "Completed" || depositStatus === "Failed" || depositStatus === "Cancelled") return;
 
     const timer = setInterval(async () => {
       try {
@@ -144,8 +282,11 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
       if (qrImageUrl) {
         URL.revokeObjectURL(qrImageUrl);
       }
+      if (expandedQrImageUrl) {
+        URL.revokeObjectURL(expandedQrImageUrl);
+      }
     };
-  }, [qrImageUrl]);
+  }, [qrImageUrl, expandedQrImageUrl]);
 
   const resolvedAmount = customAmount.trim().length > 0 ? Number(customAmount) : amount;
 
@@ -154,14 +295,67 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
 
     (async () => {
       try {
-        const response = await getMyBalance(token);
-        setBalance(response.balance);
-        await loadHistory();
+        await loadBalance();
+        await loadHistory(historyPage);
       } catch {
         // ignore balance refresh failure
       }
     })();
   }, [depositStatus, token]);
+
+  useEffect(() => {
+    if (!qrImageUrl || !depositCode) return;
+    if (depositStatus !== "Completed" && depositStatus !== "Failed" && depositStatus !== "Cancelled") return;
+
+    const timer = setTimeout(() => {
+      if (qrImageUrl) URL.revokeObjectURL(qrImageUrl);
+      setQrImageUrl(null);
+      setDepositCode(null);
+      setDepositStatus(null);
+      setDepositRemainingSeconds(null);
+      activeQrExpiredHandledRef.current = null;
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [depositStatus, qrImageUrl, depositCode]);
+
+  const handleToggleHistoryQr = async (row: HistoryRow) => {
+    if (row.status !== "Pending") return;
+
+    if (expandedHistoryId === row.id) {
+      setExpandedHistoryId(null);
+      if (expandedQrImageUrl) URL.revokeObjectURL(expandedQrImageUrl);
+      setExpandedQrImageUrl(null);
+      return;
+    }
+
+    try {
+      if (expandedQrImageUrl) URL.revokeObjectURL(expandedQrImageUrl);
+      setExpandedQrImageUrl(null);
+      setExpandedHistoryId(row.id);
+      const imageUrl = await getDepositHistoryQr(row.code, token);
+      setExpandedQrImageUrl(imageUrl);
+    } catch (error) {
+      const message = error instanceof HttpError ? error.message : "Không tải được mã QR.";
+      setHistoryError(message);
+      setExpandedHistoryId(null);
+    }
+  };
+
+  const handleCancelDeposit = async () => {
+    if (!depositCode) return;
+    try {
+      setIsCancellingDeposit(true);
+      await cancelDeposit(depositCode, token);
+      setDepositStatus("Cancelled");
+      await loadHistory(historyPage, false);
+    } catch (error) {
+      const message = error instanceof HttpError ? error.message : "Không hủy được giao dịch.";
+      setDepositError(message);
+    } finally {
+      setIsCancellingDeposit(false);
+    }
+  };
 
   const handleCreateDeposit = async () => {
     if (selectedMethod !== "qr") {
@@ -173,11 +367,13 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
       setIsCreatingDeposit(true);
       setDepositError(null);
       setDepositStatus("Pending");
+      setDepositRemainingSeconds(null);
       const result = await createDepositQr(resolvedAmount, token);
       if (qrImageUrl) URL.revokeObjectURL(qrImageUrl);
       setQrImageUrl(result.imageUrl);
       setDepositCode(result.code);
-      await loadHistory();
+      setDepositRemainingSeconds(15 * 60);
+      await loadHistory(historyPage, true, result.code);
     } catch (error) {
       const message = error instanceof HttpError ? error.message : "Không tạo được mã QR nạp tiền.";
       setDepositError(message);
@@ -364,10 +560,39 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
                   <div className="mt-6 rounded-2xl border border-hairline bg-canvas/60 p-4">
                     <p className="text-sm font-semibold text-ink">Mã nạp: {depositCode}</p>
                     <p className="mt-1 text-xs text-muted">Giữ nguyên nội dung chuyển khoản khi thanh toán.</p>
+                    {depositStatus === "Pending" ? (
+                      <p className="mt-1 text-xs font-semibold text-primary">Thời gian còn lại: {formatCountdown(depositRemainingSeconds)}</p>
+                    ) : null}
                     <div className="mt-4 flex justify-center">
-                      <img src={qrImageUrl} alt="Mã QR nạp tiền" className="h-64 w-64 rounded-xl border border-hairline bg-white p-2" />
+                      <div className="qr-scan-frame h-64 w-64">
+                        <span className="qr-scan-corner tl" />
+                        <span className="qr-scan-corner tr" />
+                        <span className="qr-scan-corner bl" />
+                        <span className="qr-scan-corner br" />
+                        <img src={qrImageUrl} alt="Mã QR nạp tiền" className="h-full w-full rounded-xl bg-white p-2" />
+                      </div>
                     </div>
-                    {depositStatus ? <DepositStateBadge status={depositStatus} /> : null}
+                    {depositStatus ? (
+                      depositStatus === "Pending" ? (
+                        <div className="mt-4 flex items-stretch gap-3">
+                          <button
+                            type="button"
+                            onClick={() => void handleCancelDeposit()}
+                            disabled={isCancellingDeposit}
+                            className="flex basis-1/3 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            <XCircle className="h-4 w-4" />
+                            {isCancellingDeposit ? "Đang hủy..." : "Hủy giao dịch"}
+                          </button>
+                          <div className="flex basis-2/3 items-center justify-center gap-2 rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                            Đang chờ thanh toán
+                          </div>
+                        </div>
+                      ) : (
+                        <DepositStateBadge status={depositStatus} />
+                      )
+                    ) : null}
                   </div>
                 ) : null}
               </section>
@@ -378,7 +603,7 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
                   <h3 className="text-base font-semibold text-ink">Lịch sử nạp gần đây</h3>
                   <button
                     type="button"
-                    onClick={() => void loadHistory()}
+                    onClick={() => void loadHistory(historyPage, true)}
                     className="text-xs font-semibold text-primary hover:underline"
                   >
                     Làm mới
@@ -392,41 +617,110 @@ export default function DashboardPage({ user, token, onSignOut }: Props) {
                         <th className="px-4 py-3 font-semibold">Số tiền</th>
                         <th className="px-4 py-3 font-semibold">Trạng thái</th>
                         <th className="px-4 py-3 font-semibold">Phương thức</th>
+                        <th className="px-4 py-3 text-right font-semibold"> </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-hairline">
                       {isHistoryLoading ? (
                         <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-muted">
+                          <td colSpan={5} className="px-4 py-6 text-center text-muted">
                             Đang tải lịch sử nạp...
                           </td>
                         </tr>
                       ) : historyError ? (
                         <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-rose-600">
+                          <td colSpan={5} className="px-4 py-6 text-center text-rose-600">
                             {historyError}
                           </td>
                         </tr>
                       ) : history.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-muted">
+                          <td colSpan={5} className="px-4 py-6 text-center text-muted">
                             Chưa có giao dịch nạp nào.
                           </td>
                         </tr>
                       ) : (
-                        history.map((row) => (
-                          <tr key={`${row.date}-${row.amount}`} className="transition-colors hover:bg-canvas/60">
-                            <td className="px-4 py-3 text-muted">{row.date}</td>
-                            <td className="px-4 py-3 font-semibold text-ink">{row.amount}</td>
-                            <td className="px-4 py-3">
-                              <StatusBadge status={row.status} />
-                            </td>
-                            <td className="px-4 py-3 text-muted">{row.method}</td>
-                          </tr>
-                        ))
+                        history.map((row) => {
+                          const isExpanded = expandedHistoryId === row.id;
+                          return (
+                            <Fragment key={row.id}>
+                              <tr
+                                onClick={row.status === "Pending" ? () => void handleToggleHistoryQr(row) : undefined}
+                                className={
+                                  "transition-colors " +
+                                  (row.status === "Pending" ? "cursor-pointer hover:bg-primary/5" : "hover:bg-canvas/60")
+                                }
+                              >
+                                <td className="px-4 py-3 text-muted">{row.date}</td>
+                                <td className="px-4 py-3 font-semibold text-ink">{row.amount}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <StatusBadge status={row.status} />
+                                    {row.status === "Pending" ? (
+                                      <span className="text-xs font-semibold text-primary">{formatCountdown(row.remainingSeconds)}</span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-muted">{row.method}</td>
+                                <td className="px-4 py-3 text-right">
+                                  {row.status === "Pending" ? (
+                                    <span className="inline-flex items-center text-primary">
+                                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                    </span>
+                                  ) : null}
+                                </td>
+                              </tr>
+                              {isExpanded ? (
+                                <tr className="bg-canvas/40">
+                                  <td colSpan={5} className="px-4 py-4">
+                                    <div className="flex flex-col items-center gap-2">
+                                      <p className="text-xs font-medium text-muted">Mã nạp: {row.code}</p>
+                                      {expandedQrImageUrl ? (
+                                        <div className="qr-scan-frame h-48 w-48">
+                                          <span className="qr-scan-corner tl" />
+                                          <span className="qr-scan-corner tr" />
+                                          <span className="qr-scan-corner bl" />
+                                          <span className="qr-scan-corner br" />
+                                          <img src={expandedQrImageUrl} alt={`QR ${row.code}`} className="h-full w-full rounded-xl bg-white p-2" />
+                                        </div>
+                                      ) : (
+                                        <div className="flex h-48 w-48 items-center justify-center rounded-xl border border-hairline bg-white text-xs text-muted">
+                                          Đang tải QR...
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
+                  <div className="flex items-center justify-between border-t border-hairline px-4 py-3 text-xs text-muted">
+                    <span>
+                      Trang {historyTotalPages === 0 ? 0 : historyPage}/{historyTotalPages}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void loadHistory(historyPage - 1)}
+                        disabled={isHistoryLoading || historyPage <= 1}
+                        className="rounded-lg border border-hairline px-3 py-1.5 font-semibold text-ink transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Trước
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void loadHistory(historyPage + 1)}
+                        disabled={isHistoryLoading || historyPage >= historyTotalPages}
+                        className="rounded-lg border border-hairline px-3 py-1.5 font-semibold text-ink transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Sau
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </section>
             </div>
@@ -582,10 +876,10 @@ function Step({ index, title, detail }: { index: number; title: string; detail: 
   );
 }
 
-function DepositStateBadge({ status }: { status: "Pending" | "Completed" | "Failed" }) {
+function DepositStateBadge({ status }: { status: "Pending" | "Completed" | "Failed" | "Cancelled" }) {
   const config = {
     Pending: {
-      label: "Đang chờ thanh toán · tự kiểm tra mỗi 5 giây",
+      label: "Đang chờ thanh toán   ",
       className: "bg-primary/10 text-primary",
       icon: LoaderCircle,
       spin: true,
@@ -599,6 +893,12 @@ function DepositStateBadge({ status }: { status: "Pending" | "Completed" | "Fail
     Failed: {
       label: "Giao dịch thất bại",
       className: "bg-rose-500/10 text-rose-600",
+      icon: XCircle,
+      spin: false,
+    },
+    Cancelled: {
+      label: "Đã hủy giao dịch",
+      className: "bg-amber-400/15 text-amber-600",
       icon: XCircle,
       spin: false,
     },
@@ -618,6 +918,7 @@ function StatusBadge({ status }: { status: HistoryRow["status"] }) {
     Completed: "bg-emerald-500/10 text-emerald-600",
     Pending: "bg-primary/10 text-primary",
     Failed: "bg-rose-500/10 text-rose-600",
+    Cancelled: "bg-amber-400/15 text-amber-600",
   } as const;
   return (
     <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${map[status]}`}>

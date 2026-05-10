@@ -28,17 +28,26 @@ export interface WalletBalanceResponse {
 
 export interface DepositStatusResponse {
   code: string;
-  status: "Pending" | "Completed" | "Failed" | 0 | 1 | 2;
+  status: "Pending" | "Completed" | "Failed" | "Cancelled" | 0 | 1 | 2 | 3;
 }
 
 export interface DepositHistoryResponse {
   id: string;
   code: string;
   amount: number;
-  status: "Pending" | "Completed" | "Failed" | 0 | 1 | 2;
+  status: "Pending" | "Completed" | "Failed" | "Cancelled" | 0 | 1 | 2 | 3;
   method: "QrCode" | "BankTransfer" | 0 | 1;
   createdAt: string;
   paidAt?: string | null;
+  remainingSeconds?: number | null;
+}
+
+export interface DepositHistoryPagedResponse {
+  items: DepositHistoryResponse[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
 }
 
 export interface ApiError {
