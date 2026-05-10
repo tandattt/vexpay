@@ -85,7 +85,7 @@ namespace VexPay.Services.Auth
             var keyBytes = Encoding.UTF8.GetBytes(_jwt.SecretKey.Trim());
             var credentials = new SigningCredentials(new SymmetricSecurityKey(keyBytes), SecurityAlgorithms.HmacSha256);
 
-            var now = DateTime.UtcNow;
+            var now = DateTime.Now;
             var expires = now.Add(lifetime);
 
             var token = new JwtSecurityToken(

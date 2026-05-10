@@ -17,7 +17,7 @@ namespace VexPay.Entities
         public string RoleId { get; set; } = string.Empty;
 
         [Column("created_at")]
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
 
         public User? User { get; set; }
         public Role? Role { get; set; }

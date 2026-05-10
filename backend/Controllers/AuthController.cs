@@ -52,11 +52,12 @@ namespace VexPay.Controllers
 
         private void SetRefreshTokenCookie(string refreshToken, long expiresInSeconds)
         {
+            var isHttps = Request.IsHttps;
             var options = new CookieOptions
             {
                 HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.Strict,
+                Secure = isHttps,
+                SameSite = isHttps ? SameSiteMode.None : SameSiteMode.Lax,
                 Path = "/",
                 MaxAge = TimeSpan.FromSeconds(expiresInSeconds),
                 Expires = DateTimeOffset.Now.AddSeconds(expiresInSeconds),
