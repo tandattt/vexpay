@@ -1,0 +1,6 @@
+@VexPay_HostAddress = http://localhost:5253
+
+GET {{VexPay_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
