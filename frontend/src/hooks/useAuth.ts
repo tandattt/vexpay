@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { UserInfo } from "../types";
-import { setAccessToken } from "../api/authTokenStore";
+import { setAccessToken, subscribeAccessToken } from "../api/authTokenStore";
 
 const TOKEN_KEY = "vexpay.access_token";
 const USER_KEY = "vexpay.user";
@@ -38,6 +38,16 @@ export function useAuth() {
     write(state);
     setAccessToken(state.token);
   }, [state]);
+
+  useEffect(() => {
+    return subscribeAccessToken((token) => {
+      setState((current) => {
+        if (current.token === token) return current;
+        if (!token && !current.user) return current;
+        return { token, user: token ? current.user : null };
+      });
+    });
+  }, []);
 
   const signIn = (token: string, user: UserInfo) => setState({ token, user });
   const signOut = () => setState({ token: null, user: null });
