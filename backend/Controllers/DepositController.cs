@@ -58,15 +58,49 @@ namespace VexPay.Controllers
         }
 
         [HttpGet("history")]
-        public async Task<IActionResult> GetHistory(CancellationToken cancellationToken)
+        public async Task<IActionResult> GetHistory([FromQuery] int page = 1, [FromQuery] int pageSize = 5, CancellationToken cancellationToken = default)
         {
             try
             {
                 var userId = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedException("Không xác định được người dùng từ token.");
 
-                var history = await _depositService.GetHistoryAsync(userId, cancellationToken);
+                var history = await _depositService.GetHistoryAsync(userId, page, pageSize, cancellationToken);
                 return Ok(history);
+            }
+            catch (AppException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("cancel/{code}")]
+        public async Task<IActionResult> Cancel([FromRoute] string code, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var userId = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedException("Không xác định được người dùng từ token.");
+
+                await _depositService.CancelAsync(userId, code, cancellationToken);
+                return Ok(new { success = true });
+            }
+            catch (AppException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("history/{code}/qr")]
+        public async Task<IActionResult> GetHistoryQr([FromRoute] string code, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var userId = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedException("Không xác định được người dùng từ token.");
+
+                var imageBytes = await _depositService.GetQrImageByCodeAsync(userId, code, cancellationToken);
+                return File(imageBytes, "image/png", $"{code}.png");
             }
             catch (AppException ex)
             {

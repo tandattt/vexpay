@@ -11,5 +11,6 @@ namespace VexPay.Models.Response.Deposit
         public DepositMethod Method { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? PaidAt { get; set; }
+        public int? RemainingSeconds { get; set; }
     }
 }

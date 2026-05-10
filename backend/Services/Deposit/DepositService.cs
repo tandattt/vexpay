@@ -16,13 +16,14 @@ namespace VexPay.Services.Deposit
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IWebHostEnvironment _env;
         private readonly SepaySettings _sepay;
-
-        public DepositService(AppDbContext db, IHttpClientFactory httpClientFactory, IWebHostEnvironment env, IOptions<SepaySettings> sepay)
+        private readonly GlobalSettings _global;
+        public DepositService(AppDbContext db, IHttpClientFactory httpClientFactory, IWebHostEnvironment env, IOptions<SepaySettings> sepay, IOptions<GlobalSettings> global)
         {
             _db = db;
             _httpClientFactory = httpClientFactory;
             _env = env;
             _sepay = sepay.Value;
+            _global = global.Value;
         }
 
         public async Task<(CreateDepositQrResponse Response, byte[] ImageBytes)> CreateQrAsync(string userId, decimal amount, CancellationToken cancellationToken = default)
@@ -59,7 +60,7 @@ namespace VexPay.Services.Deposit
             deposit.QrImagePath = $"qrs/{fileName}";
             await _db.SaveChangesAsync(cancellationToken);
 
-            BackgroundJob.Schedule(() => DeleteFile(fullPath), TimeSpan.FromMinutes(10));
+            BackgroundJob.Schedule(() => DeleteFile(fullPath), TimeSpan.FromMinutes(_global.QrImageExpirationMinutes));
 
             return (new CreateDepositQrResponse
             {
@@ -85,12 +86,21 @@ namespace VexPay.Services.Deposit
             return status.Value;
         }
 
-        public async Task<IReadOnlyList<DepositHistoryResponse>> GetHistoryAsync(string userId, CancellationToken cancellationToken = default)
+        public async Task<DepositHistoryPagedResponse> GetHistoryAsync(string userId, int page = 1, int pageSize = 5, CancellationToken cancellationToken = default)
         {
-            return await _db.DepositHistories
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, 50);
+
+            var query = _db.DepositHistories
                 .AsNoTracking()
                 .Where(x => x.UserId == userId)
-                .OrderByDescending(x => x.CreatedAt)
+                .OrderByDescending(x => x.CreatedAt);
+
+            var totalItems = await query.CountAsync(cancellationToken);
+            var totalPages = totalItems == 0 ? 0 : (int)Math.Ceiling(totalItems / (double)pageSize);
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(x => new DepositHistoryResponse
                 {
                     Id = x.Id,
@@ -101,8 +111,75 @@ namespace VexPay.Services.Deposit
                     CreatedAt = x.CreatedAt,
                     PaidAt = x.PaidAt,
                 })
-                .Take(20)
                 .ToListAsync(cancellationToken);
+
+            var now = DateTime.Now;
+            foreach (var item in items)
+            {
+                if (item.Status == DepositStatus.Pending)
+                {
+                    var expiresAt = item.CreatedAt.AddMinutes(_global.QrImageExpirationMinutes);
+                    item.RemainingSeconds = Math.Max(0, (int)(expiresAt - now).TotalSeconds);
+                }
+                else
+                {
+                    item.RemainingSeconds = null;
+                }
+            }
+
+            return new DepositHistoryPagedResponse
+            {
+                Items = items,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = totalItems,
+                TotalPages = totalPages,
+            };
+        }
+
+        public async Task<byte[]> GetQrImageByCodeAsync(string userId, string code, CancellationToken cancellationToken = default)
+        {
+            var qrImagePath = await _db.DepositHistories
+                .AsNoTracking()
+                .Where(x => x.UserId == userId && x.Code == code && x.Status == DepositStatus.Pending)
+                .Select(x => x.QrImagePath)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(qrImagePath))
+            {
+                throw new AppException("Không tìm thấy QR cho giao dịch đang chờ.", 404);
+            }
+
+            var fullPath = GetQrImageFullPath(qrImagePath);
+            if (!File.Exists(fullPath))
+            {
+                throw new AppException("Ảnh QR không còn tồn tại.", 404);
+            }
+
+            return await File.ReadAllBytesAsync(fullPath, cancellationToken);
+        }
+
+        public async Task CancelAsync(string userId, string code, CancellationToken cancellationToken = default)
+        {
+            var deposit = await _db.DepositHistories
+                .FirstOrDefaultAsync(x => x.UserId == userId && x.Code == code, cancellationToken);
+
+            if (deposit is null)
+            {
+                throw new AppException("Không tìm thấy giao dịch nạp.", 404);
+            }
+
+            if (deposit.Status != DepositStatus.Pending)
+            {
+                throw new AppException("Chỉ có thể hủy giao dịch đang chờ thanh toán.", 400);
+            }
+
+            var qrPath = deposit.QrImagePath;
+            deposit.Status = DepositStatus.Cancelled;
+            deposit.QrImagePath = null;
+            await _db.SaveChangesAsync(cancellationToken);
+
+            DeleteQrImageFileByRelativePath(qrPath);
         }
 
         public async Task MarkPaidFromSepayAsync(long sepayTransactionId, string content, long transferAmount, CancellationToken cancellationToken = default)
@@ -123,34 +200,95 @@ namespace VexPay.Services.Deposit
             matched.Status = matched.Amount == transferAmount ? DepositStatus.Completed : DepositStatus.Failed;
             matched.PaidAt = DateTime.Now;
 
-            DeleteQrImageByRelativePath(matched.QrImagePath);
-            matched.QrImagePath = null;
+            if (matched.Status == DepositStatus.Completed)
+            {
+                var wallet = await _db.Wallets.FirstOrDefaultAsync(w => w.UserId == matched.UserId, cancellationToken);
+                if (wallet is null)
+                {
+                    wallet = new Entities.Wallet
+                    {
+                        UserId = matched.UserId,
+                        Balance = 0m,
+                    };
+                    _db.Wallets.Add(wallet);
+                }
+
+                wallet.Balance += matched.Amount;
+                var qrPath = matched.QrImagePath;
+                matched.QrImagePath = null;
+                DeleteQrImageFileByRelativePath(qrPath);
+            }
 
             await _db.SaveChangesAsync(cancellationToken);
         }
 
         public void DeleteFile(string fullPath)
         {
-            if (File.Exists(fullPath))
+            var shouldDeleteFile = false;
+            var relativePath = GetQrImageRelativePath(fullPath);
+            if (!string.IsNullOrWhiteSpace(relativePath))
+            {
+                var pendingDeposit = _db.DepositHistories
+                    .FirstOrDefault(x => x.QrImagePath == relativePath && x.Status == DepositStatus.Pending);
+
+                if (pendingDeposit is null)
+                {
+                    return;
+                }
+
+                pendingDeposit.Status = DepositStatus.Failed;
+                pendingDeposit.QrImagePath = null;
+                _db.SaveChanges();
+                shouldDeleteFile = true;
+            }
+            else
+            {
+                shouldDeleteFile = true;
+            }
+
+            if (shouldDeleteFile && File.Exists(fullPath))
             {
                 File.Delete(fullPath);
             }
         }
 
-        private void DeleteQrImageByRelativePath(string? relativePath)
+        private void DeleteQrImageFileByRelativePath(string? relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath))
             {
                 return;
             }
 
+            var fullPath = GetQrImageFullPath(relativePath);
+            if (File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+            }
+        }
+
+        private string GetQrImageFullPath(string relativePath)
+        {
             var webRoot = !string.IsNullOrWhiteSpace(_env.WebRootPath)
                 ? _env.WebRootPath
                 : Path.Combine(_env.ContentRootPath, "wwwroot");
 
             var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar);
-            var fullPath = Path.Combine(webRoot, normalized);
-            DeleteFile(fullPath);
+            return Path.Combine(webRoot, normalized);
+        }
+
+        private string? GetQrImageRelativePath(string fullPath)
+        {
+            var webRoot = !string.IsNullOrWhiteSpace(_env.WebRootPath)
+                ? _env.WebRootPath
+                : Path.Combine(_env.ContentRootPath, "wwwroot");
+
+            if (!fullPath.StartsWith(webRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var relative = Path.GetRelativePath(webRoot, fullPath);
+            return relative.Replace(Path.DirectorySeparatorChar, '/');
         }
 
         private static string BuildQrUrl(string acc, string bank, decimal amount, string description, string template, bool download)
