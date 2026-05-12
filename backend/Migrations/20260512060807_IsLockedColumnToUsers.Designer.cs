@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using VexPay.Data;
 
@@ -11,9 +12,11 @@ using VexPay.Data;
 namespace VexPay.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260512060807_IsLockedColumnToUsers")]
+    partial class IsLockedColumnToUsers
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -124,42 +127,6 @@ namespace VexPay.Migrations
                         .IsUnique();
 
                     b.ToTable("developer_requests");
-                });
-
-            modelBuilder.Entity("VexPay.Entities.Project", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(36)
-                        .HasColumnType("varchar(36)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)")
-                        .HasColumnName("name");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("updated_at");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasMaxLength(36)
-                        .HasColumnType("varchar(36)")
-                        .HasColumnName("user_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("UserId", "Name")
-                        .IsUnique();
-
-                    b.ToTable("projects");
                 });
 
             modelBuilder.Entity("VexPay.Entities.Role", b =>
@@ -338,17 +305,6 @@ namespace VexPay.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("VexPay.Entities.Project", b =>
-                {
-                    b.HasOne("VexPay.Entities.User", "User")
-                        .WithMany("Projects")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("VexPay.Entities.UserRole", b =>
                 {
                     b.HasOne("VexPay.Entities.Role", "Role")
@@ -389,8 +345,6 @@ namespace VexPay.Migrations
                     b.Navigation("DepositHistories");
 
                     b.Navigation("DeveloperRequest");
-
-                    b.Navigation("Projects");
 
                     b.Navigation("UserRoles");
 

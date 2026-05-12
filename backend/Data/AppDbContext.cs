@@ -15,6 +15,8 @@ namespace VexPay.Data
         public DbSet<UserRole> UserRoles => Set<UserRole>();
         public DbSet<Wallet> Wallets => Set<Wallet>();
         public DbSet<DepositHistory> DepositHistories => Set<DepositHistory>();
+        public DbSet<DeveloperRequest> DeveloperRequests => Set<DeveloperRequest>();
+        public DbSet<Project> Projects => Set<Project>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -66,6 +68,26 @@ namespace VexPay.Data
                 entity.HasOne(d => d.User)
                     .WithMany(u => u.DepositHistories)
                     .HasForeignKey(d => d.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<DeveloperRequest>(entity =>
+            {
+                entity.HasIndex(x => x.UserId).IsUnique();
+                entity.HasIndex(x => x.Status);
+                entity.HasOne(x => x.User)
+                    .WithOne(u => u.DeveloperRequest)
+                    .HasForeignKey<DeveloperRequest>(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Project>(entity =>
+            {
+                entity.HasIndex(x => new { x.UserId, x.Name }).IsUnique();
+                entity.HasIndex(x => x.UserId);
+                entity.HasOne(x => x.User)
+                    .WithMany(u => u.Projects)
+                    .HasForeignKey(x => x.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
         }

@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using VexPay.Data;
 
@@ -11,9 +12,11 @@ using VexPay.Data;
 namespace VexPay.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260511214056_DeveloperRequestTable")]
+    partial class DeveloperRequestTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -118,48 +121,9 @@ namespace VexPay.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Status");
-
-                    b.HasIndex("UserId")
-                        .IsUnique();
+                    b.HasIndex("UserId", "Status");
 
                     b.ToTable("developer_requests");
-                });
-
-            modelBuilder.Entity("VexPay.Entities.Project", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(36)
-                        .HasColumnType("varchar(36)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)")
-                        .HasColumnName("name");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("updated_at");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasMaxLength(36)
-                        .HasColumnType("varchar(36)")
-                        .HasColumnName("user_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("UserId", "Name")
-                        .IsUnique();
-
-                    b.ToTable("projects");
                 });
 
             modelBuilder.Entity("VexPay.Entities.Role", b =>
@@ -217,10 +181,6 @@ namespace VexPay.Migrations
                         .HasMaxLength(150)
                         .HasColumnType("varchar(150)")
                         .HasColumnName("full_name");
-
-                    b.Property<bool>("IsLocked")
-                        .HasColumnType("tinyint(1)")
-                        .HasColumnName("is_locked");
 
                     b.Property<string>("Password")
                         .IsRequired()
@@ -330,18 +290,7 @@ namespace VexPay.Migrations
             modelBuilder.Entity("VexPay.Entities.DeveloperRequest", b =>
                 {
                     b.HasOne("VexPay.Entities.User", "User")
-                        .WithOne("DeveloperRequest")
-                        .HasForeignKey("VexPay.Entities.DeveloperRequest", "UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("VexPay.Entities.Project", b =>
-                {
-                    b.HasOne("VexPay.Entities.User", "User")
-                        .WithMany("Projects")
+                        .WithMany("DeveloperRequests")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -388,9 +337,7 @@ namespace VexPay.Migrations
                 {
                     b.Navigation("DepositHistories");
 
-                    b.Navigation("DeveloperRequest");
-
-                    b.Navigation("Projects");
+                    b.Navigation("DeveloperRequests");
 
                     b.Navigation("UserRoles");
 

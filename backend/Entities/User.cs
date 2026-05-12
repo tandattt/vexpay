@@ -36,10 +36,15 @@ namespace VexPay.Entities
         [Column("code", TypeName = "varchar(6)")]
         public string Code { get; set; } = string.Empty;
 
+        [Column("is_locked")]
+        public bool IsLocked { get; set; } = false;
+
         public ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
 
         public Wallet? Wallet { get; set; }
 
         public ICollection<DepositHistory> DepositHistories { get; set; } = new List<DepositHistory>();
+        public DeveloperRequest? DeveloperRequest { get; set; }
+        public ICollection<Project> Projects { get; set; } = new List<Project>();
     }
 }

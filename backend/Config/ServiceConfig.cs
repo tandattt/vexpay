@@ -1,5 +1,7 @@
+using VexPay.Services.Admin;
 using VexPay.Services.Auth;
 using VexPay.Services.Deposit;
+using VexPay.Services.Developer;
 using VexPay.Services.Wallet;
 using VexPay.Settings;
 
@@ -16,8 +18,11 @@ namespace VexPay.Config
             services.AddHttpClient();
             services.AddScoped<IJwtTokenService, JwtTokenService>();
             services.AddScoped<IAuthService, AuthService>();
+            services.AddScoped<IAdminService, AdminService>();
             services.AddScoped<IWalletService, WalletService>();
             services.AddScoped<IDepositService, DepositService>();
+            services.AddScoped<IDeveloperRequestService, DeveloperRequestService>();
+            services.AddScoped<IProjectService, ProjectService>();
 
             return services;
         }
