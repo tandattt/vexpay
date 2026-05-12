@@ -32,6 +32,10 @@ namespace VexPay.Services.Auth
             {
                 throw new UnauthorizedException("Tên đăng nhập hoặc mật khẩu không chính xác.");
             }
+            if (user.IsLocked)
+            {
+                throw new UnauthorizedException("Tài khoản của bạn đã bị khóa.");
+            }
 
             var roles = user.UserRoles
                 .Where(ur => ur.Role != null)
@@ -102,6 +106,10 @@ namespace VexPay.Services.Auth
             if (user is null)
             {
                 throw new UnauthorizedException("Người dùng không tồn tại.");
+            }
+            if (user.IsLocked)
+            {
+                throw new UnauthorizedException("Tài khoản của bạn đã bị khóa.");
             }
 
             var roles = user.UserRoles
