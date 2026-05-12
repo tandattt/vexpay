@@ -2,53 +2,19 @@ using Microsoft.EntityFrameworkCore;
 using VexPay.Data;
 using VexPay.Entities;
 using VexPay.Base.Helpers;
+using VexPay.Constants;
 
 namespace VexPay.Base.Seeders
 {
     public static class DatabaseSeeder
     {
-        private const string AdminRoleName = "ADMIN";
-        private const string CustomerRoleName = "CUSTOMER";
-        private const string DeveloperRoleName = "DEVELOPER";
-        private const string ShopOwnerRoleName = "SHOP_OWNER";
-
         private const string DefaultPassword = "123456";
 
-        private static readonly SeedUser[] SeedUsers =
-        {
-            new(
-                Username: "admin",
-                FullName: "Administrator",
-                Email: "admin@vexpay.local",
-                PhoneNumber: "0000000001",
-                RoleName: AdminRoleName),
-            new(
-                Username: "customer",
-                FullName: "Default Customer",
-                Email: "customer@vexpay.local",
-                PhoneNumber: "0000000002",
-                RoleName: CustomerRoleName),
-            new(
-                Username: "developer",
-                FullName: "Default Developer",
-                Email: "developer@vexpay.local",
-                PhoneNumber: "0000000003",
-                RoleName: DeveloperRoleName),
-            new(
-                Username: "shop_owner",
-                FullName: "Default Shop Owner",
-                Email: "shop_owner@vexpay.local",
-                PhoneNumber: "0000000004",
-                RoleName: ShopOwnerRoleName),
-        };
-
-        private static readonly string[] RoleNames =
-        {
-            AdminRoleName,
-            CustomerRoleName,
-            DeveloperRoleName,
-            ShopOwnerRoleName,
-        };
+        private static readonly SeedUser DefaultUser = new(
+            Username: "admin",
+            FullName: "Administrator",
+            Email: "admin@vexpay.local",
+            PhoneNumber: "0000000001");
 
         public static async Task SeedAsync(IServiceProvider serviceProvider)
         {
@@ -58,20 +24,16 @@ namespace VexPay.Base.Seeders
             await db.Database.EnsureCreatedAsync();
 
             var roles = await SeedRolesAsync(db);
-
-            foreach (var seed in SeedUsers)
-            {
-                await SeedUserAsync(db, seed, roles[seed.RoleName]);
-            }
+            await SeedUserAsync(db, DefaultUser, roles);
         }
 
         private static async Task<Dictionary<string, Role>> SeedRolesAsync(AppDbContext db)
         {
             var existing = await db.Roles
-                .Where(r => RoleNames.Contains(r.Name))
+                .Where(r => RoleNames.All.Contains(r.Name))
                 .ToDictionaryAsync(r => r.Name);
 
-            var toAdd = RoleNames
+            var toAdd = RoleNames.All
                 .Where(name => !existing.ContainsKey(name))
                 .Select(name => new Role { Name = name })
                 .ToList();
@@ -90,7 +52,7 @@ namespace VexPay.Base.Seeders
             return existing;
         }
 
-        private static async Task SeedUserAsync(AppDbContext db, SeedUser seed, Role role)
+        private static async Task SeedUserAsync(AppDbContext db, SeedUser seed, IReadOnlyDictionary<string, Role> roles)
         {
             var user = await db.Users.FirstOrDefaultAsync(u => u.Username == seed.Username);
             if (user is null)
@@ -113,17 +75,20 @@ namespace VexPay.Base.Seeders
                 await db.SaveChangesAsync();
             }
 
-            var hasRole = await db.UserRoles
-                .AnyAsync(ur => ur.UserId == user.Id && ur.RoleId == role.Id);
-            if (!hasRole)
+            foreach (var roleName in RoleNames.All)
             {
+                var role = roles[roleName];
+                var hasRole = await db.UserRoles.AnyAsync(ur => ur.UserId == user.Id && ur.RoleId == role.Id);
+                if (hasRole) continue;
+
                 db.UserRoles.Add(new UserRole
                 {
                     UserId = user.Id,
                     RoleId = role.Id,
                 });
-                await db.SaveChangesAsync();
             }
+
+            await db.SaveChangesAsync();
         }
 
         private static async Task<string> GenerateUniqueUserCodeAsync(AppDbContext db)
@@ -142,7 +107,6 @@ namespace VexPay.Base.Seeders
             string Username,
             string FullName,
             string Email,
-            string PhoneNumber,
-            string RoleName);
+            string PhoneNumber);
     }
 }

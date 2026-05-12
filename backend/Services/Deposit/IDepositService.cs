@@ -5,6 +5,7 @@ namespace VexPay.Services.Deposit
 {
     public interface IDepositService
     {
+        DepositQrConfigResponse GetQrConfig();
         Task<(CreateDepositQrResponse Response, byte[] ImageBytes)> CreateQrAsync(string userId, decimal amount, CancellationToken cancellationToken = default);
         Task<DepositStatus> GetStatusAsync(string userId, string code, CancellationToken cancellationToken = default);
         Task<DepositHistoryPagedResponse> GetHistoryAsync(string userId, int page = 1, int pageSize = 5, CancellationToken cancellationToken = default);

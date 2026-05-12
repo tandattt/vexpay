@@ -1,5 +1,5 @@
 import { apiFetch, apiFetchBlob, HttpError } from "./client";
-import type { DepositHistoryPagedResponse, DepositStatusResponse } from "../types";
+import type { DepositHistoryPagedResponse, DepositQrConfigResponse, DepositStatusResponse } from "../types";
 
 export async function createDepositQr(amount: number, token: string): Promise<{ code: string; imageUrl: string }> {
   const response = await apiFetchBlob("/deposit/qr", {
@@ -19,6 +19,10 @@ export async function createDepositQr(amount: number, token: string): Promise<{ 
   const blob = await response.blob();
   const imageUrl = URL.createObjectURL(blob);
   return { code, imageUrl };
+}
+
+export async function getDepositQrConfig(token: string): Promise<DepositQrConfigResponse> {
+  return apiFetch<DepositQrConfigResponse>("/deposit/qr-config", { token });
 }
 
 export async function getDepositStatus(code: string, token: string): Promise<DepositStatusResponse> {

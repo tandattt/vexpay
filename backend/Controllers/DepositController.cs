@@ -91,6 +91,12 @@ namespace VexPay.Controllers
             }
         }
 
+        [HttpGet("qr-config")]
+        public IActionResult GetQrConfig()
+        {
+            return Ok(_depositService.GetQrConfig());
+        }
+
         [HttpGet("history/{code}/qr")]
         public async Task<IActionResult> GetHistoryQr([FromRoute] string code, CancellationToken cancellationToken)
         {

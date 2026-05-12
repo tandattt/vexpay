@@ -1,4 +1,5 @@
 using Hangfire;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using VexPay.Data;
@@ -17,6 +18,7 @@ namespace VexPay.Services.Deposit
         private readonly IWebHostEnvironment _env;
         private readonly SepaySettings _sepay;
         private readonly GlobalSettings _global;
+        private readonly Dictionary<string, (string Name, string ShortName)> _bankByBin;
         public DepositService(AppDbContext db, IHttpClientFactory httpClientFactory, IWebHostEnvironment env, IOptions<SepaySettings> sepay, IOptions<GlobalSettings> global)
         {
             _db = db;
@@ -24,6 +26,33 @@ namespace VexPay.Services.Deposit
             _env = env;
             _sepay = sepay.Value;
             _global = global.Value;
+            _bankByBin = LoadBankByBin();
+        }
+
+        public DepositQrConfigResponse GetQrConfig()
+        {
+            _bankByBin.TryGetValue(_sepay.BankCode, out var bank);
+            var shortName = bank.ShortName ?? string.Empty;
+            var iconBase = (_sepay.LinkIcon ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(iconBase) && !iconBase.EndsWith('/'))
+            {
+                iconBase += "/";
+            }
+
+            var iconUrl = !string.IsNullOrWhiteSpace(shortName)
+                ? $"{iconBase}{shortName.ToLowerInvariant()}-icon.png"
+                : string.Empty;
+
+            return new DepositQrConfigResponse
+            {
+                AccountName = _sepay.AccountName,
+                AccountNumber = _sepay.AccountNumber,
+                BankCode = _sepay.BankCode,
+                BankName = bank.Name ?? string.Empty,
+                BankShortName = shortName,
+                BankIconUrl = iconUrl,
+                QrImageExpirationMinutes = _global.QrImageExpirationMinutes,
+            };
         }
 
         public async Task<(CreateDepositQrResponse Response, byte[] ImageBytes)> CreateQrAsync(string userId, decimal amount, CancellationToken cancellationToken = default)
@@ -222,6 +251,38 @@ namespace VexPay.Services.Deposit
             await _db.SaveChangesAsync(cancellationToken);
         }
 
+        private Dictionary<string, (string Name, string ShortName)> LoadBankByBin()
+        {
+            try
+            {
+                var path = Path.Combine(_env.ContentRootPath, "Data", "Seed", "banks.json");
+                if (!File.Exists(path)) return new Dictionary<string, (string Name, string ShortName)>();
+
+                var json = File.ReadAllText(path);
+                var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                {
+                    return new Dictionary<string, (string Name, string ShortName)>();
+                }
+
+                var result = new Dictionary<string, (string Name, string ShortName)>();
+                foreach (var item in data.EnumerateArray())
+                {
+                    var bin = item.TryGetProperty("bin", out var binEl) ? binEl.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(bin)) continue;
+                    var name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? string.Empty : string.Empty;
+                    var shortName = item.TryGetProperty("short_name", out var shortEl) ? shortEl.GetString() ?? string.Empty : string.Empty;
+                    result[bin] = (name, shortName);
+                }
+
+                return result;
+            }
+            catch
+            {
+                return new Dictionary<string, (string Name, string ShortName)>();
+            }
+        }
+
         public void DeleteFile(string fullPath)
         {
             var shouldDeleteFile = false;
@@ -236,7 +297,7 @@ namespace VexPay.Services.Deposit
                     return;
                 }
 
-                pendingDeposit.Status = DepositStatus.Failed;
+                pendingDeposit.Status = DepositStatus.Expired;
                 pendingDeposit.QrImagePath = null;
                 _db.SaveChanges();
                 shouldDeleteFile = true;
