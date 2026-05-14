@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
     image: vexpay-backend:latest
     ports:
-      - "5011:5011"
+      - "5013:5013"
     volumes:
       - ./backend/appsettings.json:/app/appsettings.json:ro
       - ./backend/wwwroot:/app/wwwroot:ro

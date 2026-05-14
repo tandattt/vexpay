@@ -10,8 +10,8 @@ RUN dotnet publish "VexPay.csproj" -c Release -o /app/publish /p:UseAppHost=fals
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-EXPOSE 5011
-ENV ASPNETCORE_URLS=http://+:5011
+EXPOSE 5013
+ENV ASPNETCORE_URLS=http://+:5013
 ENV ASPNETCORE_ENVIRONMENT=Production
 
 COPY --from=build /app/publish .
