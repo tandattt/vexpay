@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using VexPay.Models.Requests.Sepay;
-using VexPay.Services.Deposit;
+using VexPay.Services.Payments;
 
 namespace VexPay.Controllers.Webhook.Sepay
 {
@@ -14,12 +14,12 @@ namespace VexPay.Controllers.Webhook.Sepay
     {
         private static readonly ConcurrentDictionary<long, byte> ProcessedTransactionIds = new();
         private readonly ILogger<TransactionsController> _logger;
-        private readonly IDepositService _depositService;
+        private readonly ISepayInboundService _inboundService;
 
-        public TransactionsController(ILogger<TransactionsController> logger, IDepositService depositService)
+        public TransactionsController(ILogger<TransactionsController> logger, ISepayInboundService inboundService)
         {
             _logger = logger;
-            _depositService = depositService;
+            _inboundService = inboundService;
         }
 
         [HttpPost]
@@ -51,9 +51,26 @@ namespace VexPay.Controllers.Webhook.Sepay
                 request.Code,
                 request.ReferenceCode);
 
-            if (!isDuplicate && !string.IsNullOrWhiteSpace(request.Content) && string.Equals(request.TransferType, "in", StringComparison.OrdinalIgnoreCase))
+            if (!isDuplicate && string.Equals(request.TransferType, "in", StringComparison.OrdinalIgnoreCase))
             {
-                await _depositService.MarkPaidFromSepayAsync(request.Id, request.Content, request.TransferAmount, HttpContext.RequestAborted);
+                var notification = SepayInboundNotification.FromWebhook(
+                    request.Id,
+                    request.Content,
+                    request.Code,
+                    request.ReferenceCode,
+                    request.Description,
+                    request.TransferAmount);
+
+                if (!string.IsNullOrWhiteSpace(notification.SearchText) || !string.IsNullOrWhiteSpace(notification.Code))
+                {
+                    await _inboundService.HandleAsync(notification, HttpContext.RequestAborted);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "SePay inbound skipped: empty searchable fields (tx={Id})",
+                        request.Id);
+                }
             }
 
             return Ok(new { success = true });
