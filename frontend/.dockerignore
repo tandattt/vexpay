@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-ssr
+.vite
+.git
+.github
+.cursor
+**/.DS_Store
