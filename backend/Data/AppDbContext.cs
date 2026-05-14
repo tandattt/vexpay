@@ -17,6 +17,10 @@ namespace VexPay.Data
         public DbSet<DepositHistory> DepositHistories => Set<DepositHistory>();
         public DbSet<DeveloperRequest> DeveloperRequests => Set<DeveloperRequest>();
         public DbSet<Project> Projects => Set<Project>();
+        public DbSet<ProjectApiKey> ProjectApiKeys => Set<ProjectApiKey>();
+        public DbSet<PaymentIntent> PaymentIntents => Set<PaymentIntent>();
+        public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
+        public DbSet<ProjectWebhookDelivery> ProjectWebhookDeliveries => Set<ProjectWebhookDelivery>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -88,6 +92,45 @@ namespace VexPay.Data
                 entity.HasOne(x => x.User)
                     .WithMany(u => u.Projects)
                     .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ProjectApiKey>(entity =>
+            {
+                entity.HasIndex(x => x.KeyPrefix).IsUnique();
+                entity.HasIndex(x => x.ProjectId);
+                entity.HasOne(x => x.Project)
+                    .WithMany()
+                    .HasForeignKey(x => x.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<PaymentIntent>(entity =>
+            {
+                entity.HasIndex(x => x.TransferCode).IsUnique();
+                entity.HasIndex(x => new { x.ProjectId, x.Status });
+                entity.HasIndex(x => new { x.ProjectId, x.MerchantRef });
+                entity.HasOne(x => x.Project)
+                    .WithMany()
+                    .HasForeignKey(x => x.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<WalletTransaction>(entity =>
+            {
+                entity.HasIndex(x => new { x.UserId, x.CreatedAt });
+                entity.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ProjectWebhookDelivery>(entity =>
+            {
+                entity.HasIndex(x => new { x.ProjectId, x.CreatedAt });
+                entity.HasOne(x => x.Project)
+                    .WithMany()
+                    .HasForeignKey(x => x.ProjectId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
         }
