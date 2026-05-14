@@ -1,0 +1,6 @@
+bin
+obj
+.git
+.github
+.cursor
+**/.DS_Store
