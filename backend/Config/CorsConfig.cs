@@ -4,7 +4,10 @@ namespace VexPay.Config
     {
         private const string CorsPolicyName = "FrontendPolicy";
 
-        public static IServiceCollection AddCorsConfig(this IServiceCollection services, IConfiguration configuration)
+        public static IServiceCollection AddCorsConfig(
+            this IServiceCollection services,
+            IConfiguration configuration,
+            IWebHostEnvironment environment)
         {
             var origins = configuration
                 .GetSection("Cors:AllowedOrigins")
@@ -14,6 +17,17 @@ namespace VexPay.Config
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray()
                 ?? Array.Empty<string>();
+
+            if (origins.Length == 0 && environment.IsDevelopment())
+            {
+                origins =
+                [
+                    "http://localhost:5173",
+                    "https://localhost:5173",
+                    "http://127.0.0.1:5173",
+                    "https://127.0.0.1:5173",
+                ];
+            }
 
             services.AddCors(options =>
             {

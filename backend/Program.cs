@@ -10,8 +10,9 @@ builder.Services.AddControllers();
 builder.Services.AddSwaggerConfig();
 builder.Services.AddMySqlConfig(builder.Configuration);
 builder.Services.AddJwtAuthentication(builder.Configuration);
-builder.Services.AddCorsConfig(builder.Configuration);
+builder.Services.AddCorsConfig(builder.Configuration, builder.Environment);
 builder.Services.AddAppServices(builder.Configuration);
+builder.Services.AddRateLimitingConfig();
 
 var hangfireConnection = builder.Configuration.GetConnectionString("HangfireConnection")
     ?? throw new InvalidOperationException("Missing connection string 'HangfireConnection'.");
@@ -35,13 +36,15 @@ builder.Services.AddHangfireServer();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwaggerConfig();
-}
-
 app.UseHttpsRedirection();
 app.UseCorsConfig();
+
+app.UseOpenApiDocuments();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwaggerUiInDevelopment();
+}
+
 app.UseStaticFiles();
 if (app.Environment.IsDevelopment())
 {
@@ -50,6 +53,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimitingConfig();
 
 app.MapControllers();
 
