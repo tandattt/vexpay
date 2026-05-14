@@ -1,5 +1,6 @@
 using VexPay.Enums;
 using VexPay.Models.Response.Deposit;
+using VexPay.Services.Payments;
 
 namespace VexPay.Services.Deposit
 {
@@ -11,6 +12,6 @@ namespace VexPay.Services.Deposit
         Task<DepositHistoryPagedResponse> GetHistoryAsync(string userId, int page = 1, int pageSize = 5, CancellationToken cancellationToken = default);
         Task<byte[]> GetQrImageByCodeAsync(string userId, string code, CancellationToken cancellationToken = default);
         Task CancelAsync(string userId, string code, CancellationToken cancellationToken = default);
-        Task MarkPaidFromSepayAsync(long sepayTransactionId, string content, long transferAmount, CancellationToken cancellationToken = default);
+        Task MarkPaidFromSepayAsync(SepayInboundNotification notification, CancellationToken cancellationToken = default);
     }
 }

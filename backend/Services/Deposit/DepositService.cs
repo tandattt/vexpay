@@ -7,6 +7,9 @@ using VexPay.Entities;
 using VexPay.Enums;
 using VexPay.Exceptions;
 using VexPay.Models.Response.Deposit;
+using VexPay.Enums;
+using VexPay.Services.Balance;
+using VexPay.Services.Payments;
 using VexPay.Settings;
 
 namespace VexPay.Services.Deposit
@@ -14,14 +17,22 @@ namespace VexPay.Services.Deposit
     public class DepositService : IDepositService
     {
         private readonly AppDbContext _db;
+        private readonly IBalanceService _balanceService;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IWebHostEnvironment _env;
         private readonly SepaySettings _sepay;
         private readonly GlobalSettings _global;
         private readonly Dictionary<string, (string Name, string ShortName)> _bankByBin;
-        public DepositService(AppDbContext db, IHttpClientFactory httpClientFactory, IWebHostEnvironment env, IOptions<SepaySettings> sepay, IOptions<GlobalSettings> global)
+        public DepositService(
+            AppDbContext db,
+            IBalanceService balanceService,
+            IHttpClientFactory httpClientFactory,
+            IWebHostEnvironment env,
+            IOptions<SepaySettings> sepay,
+            IOptions<GlobalSettings> global)
         {
             _db = db;
+            _balanceService = balanceService;
             _httpClientFactory = httpClientFactory;
             _env = env;
             _sepay = sepay.Value;
@@ -211,44 +222,54 @@ namespace VexPay.Services.Deposit
             DeleteQrImageFileByRelativePath(qrPath);
         }
 
-        public async Task MarkPaidFromSepayAsync(long sepayTransactionId, string content, long transferAmount, CancellationToken cancellationToken = default)
+        public async Task MarkPaidFromSepayAsync(SepayInboundNotification notification, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(content)) return;
+            if (string.IsNullOrWhiteSpace(notification.SearchText) && string.IsNullOrWhiteSpace(notification.Code))
+            {
+                return;
+            }
 
             var candidates = await _db.DepositHistories
                 .Where(x => x.Status == DepositStatus.Pending)
                 .OrderByDescending(x => x.CreatedAt)
                 .ToListAsync(cancellationToken);
 
-            var matched = candidates.FirstOrDefault(x => content.Contains(x.Code, StringComparison.OrdinalIgnoreCase));
+            var matched = candidates.FirstOrDefault(x =>
+                SepayTransferMatcher.MatchesDepositCode(x.Code, notification));
             if (matched is null) return;
 
             if (matched.SepayTransactionId.HasValue) return;
 
-            matched.SepayTransactionId = sepayTransactionId;
-            matched.Status = matched.Amount == transferAmount ? DepositStatus.Completed : DepositStatus.Failed;
-            matched.PaidAt = DateTime.Now;
-
-            if (matched.Status == DepositStatus.Completed)
+            await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+            try
             {
-                var wallet = await _db.Wallets.FirstOrDefaultAsync(w => w.UserId == matched.UserId, cancellationToken);
-                if (wallet is null)
+                matched.SepayTransactionId = notification.TransactionId;
+                matched.Status = matched.Amount == notification.TransferAmount ? DepositStatus.Completed : DepositStatus.Failed;
+                matched.PaidAt = DateTime.Now;
+
+                if (matched.Status == DepositStatus.Completed)
                 {
-                    wallet = new Entities.Wallet
-                    {
-                        UserId = matched.UserId,
-                        Balance = 0m,
-                    };
-                    _db.Wallets.Add(wallet);
+                    await _balanceService.CreditAsync(
+                        matched.UserId,
+                        matched.Amount,
+                        new WalletLedgerEntry(
+                            WalletTransactionType.Deposit,
+                            matched.Id,
+                            WalletLedgerDescriptions.ForDeposit(matched.Code)),
+                        cancellationToken);
+                    var qrPath = matched.QrImagePath;
+                    matched.QrImagePath = null;
+                    DeleteQrImageFileByRelativePath(qrPath);
                 }
 
-                wallet.Balance += matched.Amount;
-                var qrPath = matched.QrImagePath;
-                matched.QrImagePath = null;
-                DeleteQrImageFileByRelativePath(qrPath);
+                await _db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
             }
-
-            await _db.SaveChangesAsync(cancellationToken);
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
         }
 
         private Dictionary<string, (string Name, string ShortName)> LoadBankByBin()
