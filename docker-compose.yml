@@ -1,0 +1,26 @@
+services:
+  backend:
+    container_name: vexpay-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: vexpay-backend:latest
+    ports:
+      - "5011:5011"
+    volumes:
+      - ./backend/appsettings.json:/app/appsettings.json:ro
+      - ./backend/wwwroot:/app/wwwroot:ro
+      - ./backend/appsettings.Production.json:/app/appsettings.Production.json:ro
+    restart: unless-stopped
+
+  frontend:
+    container_name: vexpay-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: vexpay-frontend:latest
+    ports:
+      - "5012:5012"
+    depends_on:
+      - backend
+    restart: unless-stopped
