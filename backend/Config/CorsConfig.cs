@@ -25,7 +25,14 @@ namespace VexPay.Config
                     "http://localhost:5173",
                     "https://localhost:5173",
                     "http://127.0.0.1:5173",
-                    "https://127.0.0.1:5173",
+                    "https://127.0.0.1:5173"
+                    
+                ];
+            }
+            else if (origins.Length == 0 && environment.IsProduction())
+            {
+                origins =
+                [
                     "https://vexpay.tandat.site",
                 ];
             }
