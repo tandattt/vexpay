@@ -37,5 +37,28 @@ namespace VexPay.Controllers
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
         }
+
+        [HttpGet("transactions")]
+        public async Task<IActionResult> GetTransactions(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var userId = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrWhiteSpace(userId))
+                {
+                    throw new UnauthorizedException("Không xác định được người dùng từ token.");
+                }
+
+                var result = await _walletService.GetTransactionsAsync(userId, page, pageSize, cancellationToken);
+                return Ok(result);
+            }
+            catch (AppException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
     }
 }
